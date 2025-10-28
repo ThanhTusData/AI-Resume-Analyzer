@@ -1,0 +1,38 @@
+﻿# Byte-compiled
+__pycache__/
+*.py[cod]
+*.so
+
+# Virtual env
+.venv/
+env/
+venv/
+
+# IDE
+.vscode/
+.idea/
+
+# Data / models
+data/
+models/
+*.db
+*.sqlite3
+
+# Streamlit
+.streamlit/
+
+# Selenium profile
+selenium_profile/
+
+# Env files
+.env
+.env.*.local
+
+# Others
+*.log
+dist/
+build/
+*.egg-info/
+
+# add
+data/processed/

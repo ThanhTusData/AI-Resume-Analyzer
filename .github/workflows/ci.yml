@@ -1,0 +1,132 @@
+name: CI
+
+on:
+  push:
+    branches: ["main", "master"]
+  pull_request:
+    branches: ["*"]
+
+permissions:
+  contents: read
+
+jobs:
+  lint-test-build:
+    runs-on: ubuntu-latest
+    env:
+      PYTHONUNBUFFERED: 1
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.10
+        uses: actions/setup-python@v4
+        with:
+          python-version: "3.10"
+
+      - name: Cache pip
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements*.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-
+
+      - name: Install system deps (for tests)
+        run: |
+          sudo apt-get update
+          # install optional tools used by parsers (tesseract/poppler) — safe to be present in CI
+          sudo apt-get install -y --no-install-recommends tesseract-ocr poppler-utils
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          if [ -f requirements-dev.txt ]; then
+            pip install -r requirements-dev.txt
+          elif [ -f requirements.txt ]; then
+            pip install -r requirements.txt
+            # install linters if not in requirements
+            pip install ruff black
+          else
+            echo "No requirements file found; skipping install" && exit 1
+          fi
+
+      - name: Lint: ruff
+        run: |
+          # allow this step to pass without failing if ruff not configured
+          if command -v ruff >/dev/null 2>&1; then
+            ruff check .
+          else
+            echo "ruff not installed — skipping"
+          fi
+
+      - name: Format check: black
+        run: |
+          if command -v black >/dev/null 2>&1; then
+            black --check .
+          else
+            echo "black not installed — skipping"
+          fi
+
+      - name: Run tests
+        env:
+          PYTHONPATH: ${{ github.workspace }}
+        run: |
+          pytest -q --maxfail=1
+
+      - name: Build Docker images (api + ui) for smoke tests
+        run: |
+          # Build api target
+          docker build --pull --target api -t ai-resume-api:ci .
+          # Build ui target
+          docker build --pull --target ui -t ai-resume-ui:ci .
+
+      - name: Run API container for smoke test
+        run: |
+          set -e
+          # run api container in background
+          docker run --name ai-resume-api-ci -d -p 8080:8000 ai-resume-api:ci
+          # wait for health endpoint to be available (timeout 60s)
+          timeout=60
+          until curl -sSf http://localhost:8080/health >/dev/null 2>&1 || [ $timeout -le 0 ]; do
+            echo "Waiting for API to be ready (${timeout}s left)..."
+            timeout=$((timeout-2))
+            sleep 2
+          done
+          if [ $timeout -le 0 ]; then
+            echo "API did not become ready in time" && docker logs ai-resume-api-ci || true
+            docker rm -f ai-resume-api-ci || true
+            exit 1
+          fi
+          curl -sSf http://localhost:8080/health
+          docker rm -f ai-resume-api-ci
+
+      - name: Ensure no PII in monitoring logs
+        run: |
+          # If monitoring dir is present in repo/workspace, scan for obvious email/phone patterns.
+          if [ -d monitoring ]; then
+            echo "Scanning monitoring/ for PII..."
+            set +e
+            # email-like pattern
+            grep -E -R -n --exclude-dir=.git '[@][A-Za-z0-9._%+-]+\.[A-Za-z]{2,}' monitoring > /tmp/pii_grep || true
+            # simple US-like phone pattern (e.g., 123-456-7890)
+            grep -E -R -n --exclude-dir=.git '\b([0-9]{3}[-.\s]?){2}[0-9]{4}\b' monitoring >> /tmp/pii_grep || true
+            set -e
+            if [ -s /tmp/pii_grep ]; then
+              echo "Potential PII found in monitoring files:"
+              cat /tmp/pii_grep
+              exit 1
+            else
+              echo "No obvious PII found in monitoring/."
+            fi
+          else
+            echo "No monitoring/ directory present — skipping PII scan."
+          fi
+
+      - name: Upload test results (optional)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pytest-report
+          path: |
+            ./tests
+            ./pytest-report || true

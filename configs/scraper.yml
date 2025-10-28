@@ -1,0 +1,10 @@
+# configs/scraper.yml
+headless: true
+browser: chromium
+throttle_seconds: 1.0
+max_retries: 3
+respect_robots: true
+user_agents:
+  - "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36"
+proxy_list: []
+experimental_login_enabled: false

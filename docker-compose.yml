@@ -1,0 +1,59 @@
+version: "3.8"
+
+services:
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: api
+    image: ai-resume-api:latest
+    ports:
+      - "8000:8000"
+    environment:
+      - APP_ENV=development
+      - LOG_LEVEL=INFO
+    volumes:
+      - ./:/app:cached
+      - ./models:/app/models:rw            # optional, share/store faiss/models
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+    networks:
+      - appnet
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 1024M
+
+  ui:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: ui
+    image: ai-resume-ui:latest
+    ports:
+      - "8501:8501"
+    environment:
+      - APP_ENV=development
+      - API_BASE_URL=http://api:8000       # UI sẽ gọi API nội bộ bằng host: api
+    volumes:
+      - ./:/app:cached
+    depends_on:
+      api:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8501/ || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 6
+    networks:
+      - appnet
+
+networks:
+  appnet:
+    driver: bridge
